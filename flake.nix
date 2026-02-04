@@ -30,6 +30,7 @@
 
               # Go
               go
+              gopls
             ];
 
             shellHook = ''

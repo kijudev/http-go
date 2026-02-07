@@ -1,84 +1,87 @@
 package request
 
 import (
+	"bytes"
 	"errors"
 	"io"
-	"strings"
+)
+
+var SEP = []byte("\r\n")
+
+var (
+	ErrNeedMoreData           = errors.New("Need more data")
+	ErrInvalidRequestLine     = errors.New("Invalid request line")
+	ErrUnsupportedHTTPVersion = errors.New("Unsupported HTTP version - only HTTP/1.1 is supported")
+	ErrInvalidHeaders         = errors.New("Invalid headers")
+	ErrHeadersTooLarge        = errors.New("Headers too large")
 )
 
 type RequestLine struct {
-	Method        string
-	RequestTarget string
-	HTTPVersion   string
-}
-
-func (rl *RequestLine) ValidMethod() bool {
-	// TODO
-	return true
-}
-
-func (rl *RequestLine) ValidRequestTarget() bool {
-	// TODO
-	return true
-}
-
-func (rl *RequestLine) ValidHTTPVersion() bool {
-	return rl.HTTPVersion == "1.1"
+	Method      string
+	Target      string
+	HTTPVersion string
 }
 
 type Request struct {
-	RequestLine RequestLine
-	Headers     map[string]string
-	Body        []byte
+	Line    RequestLine
+	Headers map[string]string
+	Body    []byte
 }
 
-var ERROR_BAD_REQUEST_LINE = errors.New("Bad request line")
-var ERROR_INCOMPLETE_REQUEST_LINE = errors.New("Incomplete request line")
-var ERROR_UNSUPPORTED_HTTP_VERSION = errors.New("Unsupported HTTP version")
-var SEPARATOR = "\r\n"
+type ParserState int
 
-func parseRequestLine(input string) (*RequestLine, string, error) {
-	line, rest, isFound := strings.Cut(input, SEPARATOR)
-	if !isFound {
-		return nil, input, ERROR_INCOMPLETE_REQUEST_LINE
+const (
+	ParserStateRequestLine ParserState = iota
+	ParserStateHeaders
+	ParserStateBody
+	ParserStateComplete
+	ParserStateError
+)
+
+type RequestParser struct {
+	State   ParserState
+	Request Request
+
+	buffer bytes.Buffer
+}
+
+func NewRequestParser() *RequestParser {
+	return &RequestParser{
+		State: ParserStateRequestLine,
+	}
+}
+
+func (p *RequestParser) Parse(data []byte) (int, error) {
+	p.buffer.Write(data)
+
+	return 0, nil
+}
+
+func (p *RequestParser) parseRequestLine() (int, error) {
+	data := p.buffer.Bytes()
+
+	line, _, found := bytes.Cut(data, SEP)
+	n := len(line)
+
+	if !found {
+		return n, ErrNeedMoreData
 	}
 
-	parts := strings.Split(line, " ")
+	parts := bytes.SplitN(line, SEP, 3)
 	if len(parts) != 3 {
-		return nil, rest, ERROR_BAD_REQUEST_LINE
+		return n, ErrInvalidRequestLine
 	}
 
-	httpParts := strings.Split(parts[2], "/")
-	if len(httpParts) != 2 {
-		return nil, rest, ERROR_BAD_REQUEST_LINE
-	}
+	p.Request.Line.Method = string(parts[0])
+	p.Request.Line.Target = string(parts[1])
+	p.Request.Line.HTTPVersion = string(parts[2])
 
-	rl := &RequestLine{
-		Method:        parts[0],
-		RequestTarget: parts[1],
-		HTTPVersion:   httpParts[1],
-	}
+	p.buffer.Next(n + len(SEP))
+	p.State = ParserStateHeaders
 
-	if !rl.ValidHTTPVersion() {
-		return nil, rest, ERROR_UNSUPPORTED_HTTP_VERSION
-	}
-
-	return rl, rest, nil
+	return n, nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, errors.Join(errors.New("Unable to read io.ReadAll"), err)
-	}
-
-	str := string(data)
-	rl, str, err := parseRequestLine(str)
-	if err != nil {
-		return nil, errors.Join(errors.New("Failed to parse request line"), err)
-	}
-
-	return &Request{
-		RequestLine: *rl,
-	}, nil
+	return nil, nil
 }

@@ -1,46 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"net"
+
+	"github.com/kijudev/http-go/internal/request"
 )
-
-func getLinesFromReader(f io.ReadCloser) <-chan string {
-	out := make(chan string, 1)
-
-	go func() {
-		defer f.Close()
-		defer close(out)
-
-		str := ""
-		for {
-			data := make([]byte, 8)
-			n, err := f.Read(data)
-			if err != nil {
-				break
-			}
-
-			data = data[:n]
-			if i := bytes.IndexByte(data, '\n'); i != -1 {
-				str += string(data[:i])
-				data = data[i+1:]
-				out <- str
-				str = ""
-			}
-
-			str += string(data)
-		}
-
-		if len(str) != 0 {
-			out <- str
-		}
-	}()
-
-	return out
-}
 
 func main() {
 	listener, err := net.Listen("tcp", ":42069")
@@ -54,9 +20,12 @@ func main() {
 			log.Fatal(err)
 		}
 
-		for line := range getLinesFromReader(conn) {
-			fmt.Printf("read: %s\n", line)
+		req, err := request.RequestFromReader(conn)
+		if err != nil {
+			log.Fatal(err)
 		}
+
+		fmt.Printf("%#v\n", req)
 	}
 
 }

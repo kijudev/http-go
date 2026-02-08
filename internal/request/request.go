@@ -54,34 +54,67 @@ func NewRequestParser() *RequestParser {
 func (p *RequestParser) Parse(data []byte) (int, error) {
 	p.buffer.Write(data)
 
-	return 0, nil
+	for {
+		switch p.State {
+		case ParserStateRequestLine:
+			return p.parseRequestLine()
+		case ParserStateComplete:
+			return 0, nil
+		default:
+			return 0, nil
+		}
+	}
 }
 
 func (p *RequestParser) parseRequestLine() (int, error) {
 	data := p.buffer.Bytes()
 
 	line, _, found := bytes.Cut(data, SEP)
-	n := len(line)
+	n := len(line) + len(SEP)
 
 	if !found {
 		return n, ErrNeedMoreData
 	}
 
-	parts := bytes.SplitN(line, SEP, 3)
+	parts := bytes.SplitN(line, []byte(" "), 3)
 	if len(parts) != 3 {
 		return n, ErrInvalidRequestLine
 	}
 
+	proto, version, found := bytes.Cut(parts[2], []byte("/"))
+	if !found {
+		return n, ErrInvalidRequestLine
+	}
+
+	if !bytes.Equal(proto, []byte("HTTP")) {
+		return n, ErrInvalidRequestLine
+	}
+
+	if !bytes.Equal(version, []byte("1.1")) {
+		return n, ErrUnsupportedHTTPVersion
+	}
+
 	p.Request.Line.Method = string(parts[0])
 	p.Request.Line.Target = string(parts[1])
-	p.Request.Line.HTTPVersion = string(parts[2])
+	p.Request.Line.HTTPVersion = string(version)
 
-	p.buffer.Next(n + len(SEP))
+	p.buffer.Next(n)
 	p.State = ParserStateHeaders
 
 	return n, nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	return nil, nil
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, errors.New("Unable to io.ReadAll")
+	}
+
+	parser := NewRequestParser()
+	_, err = parser.Parse(data)
+	if err != nil {
+		return nil, errors.Join(errors.New("Unable to parse"), err)
+	}
+
+	return &parser.Request, nil
 }

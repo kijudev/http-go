@@ -9,11 +9,12 @@ import (
 var SEP = []byte("\r\n")
 
 var (
-	ErrNeedMoreData           = errors.New("Need more data")
 	ErrInvalidRequestLine     = errors.New("Invalid request line")
 	ErrUnsupportedHTTPVersion = errors.New("Unsupported HTTP version - only HTTP/1.1 is supported")
 	ErrInvalidHeaders         = errors.New("Invalid headers")
 	ErrHeadersTooLarge        = errors.New("Headers too large")
+	ErrIncompleteRequest      = errors.New("Incomplete request")
+	ErrNeedMoreData           = errors.New("Need more data")
 )
 
 type RequestLine struct {
@@ -51,47 +52,59 @@ func NewRequestParser() *RequestParser {
 	}
 }
 
-func (p *RequestParser) Parse(data []byte) (int, error) {
+func (p *RequestParser) Complete() bool {
+	return p.State == ParserStateComplete
+}
+
+func (p *RequestParser) Parse(data []byte) error {
 	p.buffer.Write(data)
 
 	for {
 		switch p.State {
 		case ParserStateRequestLine:
-			return p.parseRequestLine()
+			if err := p.parseRequestLine(); err != nil {
+				return err
+			}
+		case ParserStateHeaders:
+			// TODO: Implement
+			p.State = ParserStateComplete
+		case ParserStateBody:
+			// TODO: Implement
+			p.State = ParserStateComplete
 		case ParserStateComplete:
-			return 0, nil
-		default:
-			return 0, nil
+			return nil
+		case ParserStateError:
+			return errors.New("Parser in error state")
 		}
 	}
 }
 
-func (p *RequestParser) parseRequestLine() (int, error) {
+func (p *RequestParser) parseRequestLine() error {
 	data := p.buffer.Bytes()
 
 	line, _, found := bytes.Cut(data, SEP)
 	n := len(line) + len(SEP)
 
 	if !found {
-		return n, ErrNeedMoreData
+		return ErrNeedMoreData
 	}
 
 	parts := bytes.SplitN(line, []byte(" "), 3)
 	if len(parts) != 3 {
-		return n, ErrInvalidRequestLine
+		return ErrInvalidRequestLine
 	}
 
 	proto, version, found := bytes.Cut(parts[2], []byte("/"))
 	if !found {
-		return n, ErrInvalidRequestLine
+		return ErrInvalidRequestLine
 	}
 
 	if !bytes.Equal(proto, []byte("HTTP")) {
-		return n, ErrInvalidRequestLine
+		return ErrInvalidRequestLine
 	}
 
 	if !bytes.Equal(version, []byte("1.1")) {
-		return n, ErrUnsupportedHTTPVersion
+		return ErrUnsupportedHTTPVersion
 	}
 
 	p.Request.Line.Method = string(parts[0])
@@ -99,21 +112,33 @@ func (p *RequestParser) parseRequestLine() (int, error) {
 	p.Request.Line.HTTPVersion = string(version)
 
 	p.buffer.Next(n)
-	p.State = ParserStateHeaders
+	p.State = ParserStateComplete
 
-	return n, nil
+	return nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, errors.New("Unable to io.ReadAll")
+	parser := NewRequestParser()
+	buf := make([]byte, 1024)
+
+	for !parser.Complete() {
+		n, err := reader.Read(buf)
+
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		if err := parser.Parse(buf[:n]); err != nil && err != ErrNeedMoreData {
+			return nil, err
+		}
 	}
 
-	parser := NewRequestParser()
-	_, err = parser.Parse(data)
-	if err != nil {
-		return nil, errors.Join(errors.New("Unable to parse"), err)
+	if !parser.Complete() {
+		return nil, ErrIncompleteRequest
 	}
 
 	return &parser.Request, nil
